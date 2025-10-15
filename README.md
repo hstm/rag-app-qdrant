@@ -57,7 +57,7 @@ depending on the version you want to start.
 >  warnings.warn('resource_tracker: There appear to be %d '
 >```
 >
->The semaphore leak warning is a known issue with sentence-transformers and transformers libraries >when using multiprocessing, you can safely ignore it. The resources are still freed by the OS when the process exits.
+>The semaphore leak warning is a known issue with sentence-transformers and transformers libraries when using multiprocessing, you can safely ignore it. The resources are still freed by the OS when the process exits.
 
 ### Open the browser:
 
