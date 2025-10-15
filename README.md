@@ -1,8 +1,8 @@
-# RAG System with Anthropic API (Claude), FastAPI Web Interface, Semantic Chunking, and PDF Upload
+# RAG System with Anthropic API (Claude), FastAPI Web Interface, Paragraph-based Chunking, and PDF Upload
 
 ## Features
 
-- ✅ Semantic chunking
+- ✅ Paragraph-based chunking
 - ✅ PDF upload support
 - ✅ Prompt caching (90% cost savings!)
 - ✅ Smart relevance filtering
