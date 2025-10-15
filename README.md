@@ -61,7 +61,7 @@ depending on the version you want to start.
 
 ### Open the browser:
 
-``` Open http://localhost:8000 in your browser```
+Open [http://localhost:8000](http://localhost:8000) in your browser
 
 
 ## Documentation
