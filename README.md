@@ -59,6 +59,21 @@ depending on the version you want to start.
 >
 >The semaphore leak warning is a known issue with sentence-transformers and transformers libraries when using multiprocessing, you can safely ignore it. The resources are still freed by the OS when the process exits.
 
+>[!NOTE]
+>Instead of working with a local Qdrant database, you can also use the in-memory Qdrant instance for development: Change
+>
+>```self.qdrant_client = QdrantClient(path="./qdrant_db")```
+>
+>to
+>
+>```self.qdrant_client = QdrantClient(":memory:")```
+>
+>or use a Qdrant Docker container for persistence (https://qdrant.tech/documentation/quick_start/)
+>
+>```docker run -p 6333:6333 -v $(pwd)/qdrant_storage:/qdrant/storage qdrant/qdrant```
+>
+>```self.qdrant_client = QdrantClient(url="http://localhost:6333")```
+
 ### Open the browser:
 
 Open [http://localhost:8000](http://localhost:8000) in your browser
