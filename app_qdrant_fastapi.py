@@ -5,7 +5,7 @@ Run: uvicorn app_qdrant_fastapi:app --reload
 Then open http://localhost:8000 in your browser
 """
 
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException, Depends
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -101,6 +101,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Custom exception for configuration errors
+class ConfigurationError(Exception):
+    """Raised when there's a configuration issue."""
+    pass
+
 # Pydantic models for request/response
 class DocumentsInput(BaseModel):
     documents: List[str]
@@ -121,6 +126,13 @@ class StatusResponse(BaseModel):
     success: bool
     message: Optional[str] = None
     error: Optional[str] = None
+
+class HealthResponse(BaseModel):
+    status: str
+    configured: bool
+    message: Optional[str] = None
+    documents_count: Optional[int] = None
+    instructions: Optional[str] = None
 
 class RAGSystem:
     def __init__(self, anthropic_api_key: str, embedding_model: str = 'all-MiniLM-L6-v2'):
@@ -391,9 +403,48 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
     
     return text
 
-# Initialize RAG system
-API_KEY = os.environ.get("ANTHROPIC_API_KEY", "your-api-key-here")
-rag = RAGSystem(anthropic_api_key=API_KEY)
+def get_api_key() -> str:
+    """Get API key with proper validation."""
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    
+    if not api_key or api_key == "your-api-key-here":
+        raise ConfigurationError(
+            "ANTHROPIC_API_KEY environment variable is not set. "
+            "Please set it with: export ANTHROPIC_API_KEY='your-key-here'"
+        )
+    
+    return api_key
+
+# Initialize RAG system with proper error handling
+rag = None
+try:
+    API_KEY = get_api_key()
+    rag = RAGSystem(anthropic_api_key=API_KEY)
+except ConfigurationError as e:
+    print(f"\n{'='*60}")
+    print("CONFIGURATION ERROR")
+    print(f"{'='*60}")
+    print(f"\n{str(e)}\n")
+    print("To fix this:")
+    print("1. Get your API key from: https://console.anthropic.com/")
+    print("2. Set it as an environment variable:")
+    print("   export ANTHROPIC_API_KEY='your-api-key-here'")
+    print("3. Restart the server\n")
+    print(f"{'='*60}\n")
+
+# Dependency to check configuration
+def require_configured_rag() -> RAGSystem:
+    """Dependency that ensures RAG system is configured."""
+    if rag is None:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "Service not configured",
+                "message": "ANTHROPIC_API_KEY environment variable is not set",
+                "instructions": "Please configure the API key and restart the server"
+            }
+        )
+    return rag
 
 # HTML template
 HTML_TEMPLATE = """
@@ -445,6 +496,34 @@ HTML_TEMPLATE = """
             border-radius: 20px;
             font-size: 0.85em;
             margin-top: 10px;
+        }
+        
+        .health-status {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+        
+        .health-status.error {
+            border-left: 4px solid #dc2626;
+        }
+        
+        .health-status.healthy {
+            border-left: 4px solid #16a34a;
+        }
+        
+        .health-status h3 {
+            margin-bottom: 10px;
+        }
+        
+        .health-status.error h3 {
+            color: #dc2626;
+        }
+        
+        .health-status.healthy h3 {
+            color: #16a34a;
         }
         
         .card {
@@ -723,6 +802,8 @@ HTML_TEMPLATE = """
             <p>Powered by Claude & Qdrant Vector DB (FastAPI)</p>
             <span class="badge">🚀 Production Ready</span>
         </div>
+
+        <div id="healthStatus"></div>
         
         <div class="card">
             <div class="tabs">
@@ -777,6 +858,37 @@ HTML_TEMPLATE = """
     
     <script>
         let selectedFiles = [];
+
+        // Check health on page load
+        window.addEventListener('load', checkHealth);
+        
+        async function checkHealth() {
+            try {
+                const response = await fetch('/health');
+                const data = await response.json();
+                
+                const healthDiv = document.getElementById('healthStatus');
+                
+                if (data.configured) {
+                    healthDiv.innerHTML = `
+                        <div class="health-status healthy">
+                            <h3>✅ System Ready</h3>
+                            <p>Documents in database: ${data.documents_count || 0}</p>
+                        </div>
+                    `;
+                } else {
+                    healthDiv.innerHTML = `
+                        <div class="health-status error">
+                            <h3>⚠️ Configuration Required</h3>
+                            <p><strong>Error:</strong> ${data.message}</p>
+                            <p><strong>Instructions:</strong> ${data.instructions}</p>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                console.error('Health check failed:', error);
+            }
+        }
         
         function switchTab(tab) {
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -831,6 +943,7 @@ HTML_TEMPLATE = """
                     selectedFiles = [];
                     document.getElementById('pdfInput').value = '';
                     document.getElementById('fileName').textContent = '';
+                    checkHealth(); // Refresh health status
                 } else {
                     statusDiv.innerHTML = `<div class="status error">Error: ${data.error}</div>`;
                 }
@@ -862,6 +975,7 @@ HTML_TEMPLATE = """
                 if (data.success) {
                     statusDiv.innerHTML = `<div class="status success">${data.message}</div>`;
                     document.getElementById('documents').value = '';
+                    checkHealth(); // Refresh health status
                 } else {
                     statusDiv.innerHTML = `<div class="status error">Error: ${data.error}</div>`;
                 }
@@ -886,6 +1000,7 @@ HTML_TEMPLATE = """
                 
                 if (data.success) {
                     statusDiv.innerHTML = `<div class="status success">${data.message}</div>`;
+                    checkHealth(); // Refresh health status
                 } else {
                     statusDiv.innerHTML = `<div class="status error">Error: ${data.error}</div>`;
                 }
@@ -957,31 +1072,65 @@ HTML_TEMPLATE = """
 </html>
 """
 
+# Health check endpoint
+@app.get("/health", response_model=HealthResponse)
+async def health_check():
+    """Check if the service is properly configured."""
+    if rag is None:
+        return HealthResponse(
+            status="error",
+            configured=False,
+            message="ANTHROPIC_API_KEY not configured",
+            instructions="Set ANTHROPIC_API_KEY environment variable and restart"
+        )
+    
+    try:
+        collection_info = rag.qdrant_client.get_collection(rag.collection_name)
+        return HealthResponse(
+            status="healthy",
+            configured=True,
+            documents_count=collection_info.points_count
+        )
+    except Exception as e:
+        return HealthResponse(
+            status="error",
+            configured=True,
+            message=str(e)
+        )
+
 @app.get("/", response_class=HTMLResponse)
 async def home():
     return HTML_TEMPLATE
 
 @app.post("/add_documents", response_model=StatusResponse)
-async def add_documents(data: DocumentsInput):
+async def add_documents(
+    data: DocumentsInput,
+    rag_system: RAGSystem = Depends(require_configured_rag)
+):
     try:
         documents = data.documents
         
         if not documents:
             raise HTTPException(status_code=400, detail="No documents provided")
         
-        rag.add_documents(documents)
+        rag_system.add_documents(documents)
         
-        collection_info = rag.qdrant_client.get_collection(rag.collection_name)
+        collection_info = rag_system.qdrant_client.get_collection(rag_system.collection_name)
         
         return StatusResponse(
             success=True,
             message=f"Successfully added {len(documents)} document(s). Total points: {collection_info.points_count}"
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/upload_pdfs", response_model=StatusResponse)
-async def upload_pdfs(files: List[UploadFile] = File(...)):
+async def upload_pdfs(
+    files: List[UploadFile] = File(...),
+    rag_system: RAGSystem = Depends(require_configured_rag)
+):
     try:
         documents = []
         
@@ -992,41 +1141,62 @@ async def upload_pdfs(files: List[UploadFile] = File(...)):
                 documents.append(text)
         
         if not documents:
-            raise HTTPException(status_code=400, detail="No valid PDF found")
+            raise HTTPException(status_code=400, detail="No valid PDF files found")
         
-        rag.add_documents(documents)
+        rag_system.add_documents(documents)
         
-        collection_info = rag.qdrant_client.get_collection(rag.collection_name)
+        collection_info = rag_system.qdrant_client.get_collection(rag_system.collection_name)
         
         return StatusResponse(
             success=True,
             message=f"Successfully processed {len(files)} PDF(s). Total points: {collection_info.points_count}"
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/clear_database", response_model=StatusResponse)
-async def clear_database():
+async def clear_database(
+    rag_system: RAGSystem = Depends(require_configured_rag)
+):
     try:
-        rag.clear_database()
+        rag_system.clear_database()
         return StatusResponse(
             success=True,
             message="Database cleared successfully"
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/query", response_model=QueryResponse)
-async def query_endpoint(data: QuestionInput):
+async def query_endpoint(
+    data: QuestionInput,
+    rag_system: RAGSystem = Depends(require_configured_rag)
+):
     try:
         question = data.question
         
         if not question:
             raise HTTPException(status_code=400, detail="No question provided")
         
-        result = rag.query(question)
+        result = rag_system.query(question)
         
         return QueryResponse(**result)
+    except HTTPException:
+        raise
+    except anthropic.AuthenticationError:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid Anthropic API key. Please check your configuration."
+        )
+    except anthropic.RateLimitError:
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded. Please try again later."
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
